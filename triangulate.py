@@ -8,6 +8,9 @@ world_to_cam = np.matrix([[0, -1, 0, 0],
                           [1, 0,  0, 0],
                           [0, 0,  0, 1]])
 
+world_to_cam_3 = np.matrix([[0, -1, 0],
+                            [0, 0, -1],
+                            [1, 0,  0]])
 
 def camera_intrinsics(fx=1, fy=1, cx=0, cy=0):
     mat = [[fx, 0, cx, 0],
@@ -15,16 +18,14 @@ def camera_intrinsics(fx=1, fy=1, cx=0, cy=0):
            [0,  0,  1, 0]]
     return np.matrix(mat)
 
-
 def global_to_local(x, y, theta):
     s = np.sin(theta)
     c = np.cos(theta)
-    mat = [[ c,  s, 0, -x],
-           [-s,  c, 0, -y],
+    mat = [[c,  -s, 0,  x],
+           [s,  c,  0,  y],
            [ 0,  0, 1,  0],
            [ 0,  0, 0,  1]]
-    return np.matrix(mat)
-
+    return linalg.inv(np.matrix(mat))
 
 def random_3d_point():
     x = random.uniform(0, 7)
@@ -154,7 +155,7 @@ def solve_rand_point_exact_open_cv():
     pt = random_3d_point()
     print("Rand point: ", pt.T)
 
-    x, y, theta = 0.03, 0, 0.09
+    x, y, theta = 0.03, 0, 0.3
     fx, fy, cx, cy = 50, 50, 0, 0
     noise = 0
     print("Pixel noise: ", noise)
@@ -179,16 +180,141 @@ def solve_rand_point_exact_open_cv():
     print("% Error: ", percent_err)
     return percent_err
 
+def compute_local_image_frame_transform(epipole, u):
+    e1 = epipole.item(0, 0)
+    e2 = epipole.item(1, 0)
+    e3 = epipole.item(2, 0)
+
+    u1 = u.item(0, 0)
+    u2 = u.item(1, 0)
+
+    L = np.matrix([[1, 0, -u1],
+                   [0, 1, -u2],
+                   [0, 0,   1]])
+
+    # solve a * sin (theta) + b * cos(theta) = 0
+    # -> use R * cos (alpha) * sin (theta) + R * sin (alpha) * cos (theta) = 0 (R-formula)
+    # R sin (theta + alpha) = 0
+    # -> tan (alpha) = b / a
+    a = e1 - e3 * u1
+    b = e2 - e3 * u2
+
+    alpha = np.arctan2(b, a)
+    theta = 3.1415 - alpha
+
+    c = np.cos(theta)
+    s = np.sin(theta)
+    R = np.matrix([[c, -s, 0],
+                   [s,  c, 0],
+                   [0,  0, 1]])
+    return R * L
+
+# compute fundamental matrix from relative pose and camera matrix
+def get_fundamental_matrix(x, y, theta, fx, fy, cx, cy):
+    k = [[fx, 0, cx],
+         [0, fy, cy],
+         [0,  0,  1]]
+
+    K = np.matrix(k) * world_to_cam_3
+    K_inv = linalg.inv(K)
+
+    phi = np.arctan2(y, x)
+    gamma = theta - phi
+    cp, sp = np.cos(phi), np.sin(phi)
+    cg, sg = np.cos(gamma), np.sin(gamma)
+
+    # given x0, x unit vectors to feature at origin and non-origin:
+    # x0^T * E * x = 0
+    # K * x = u => x = K^-1 * u
+    E = [[0, 0, sp],
+         [0, 0, -cp],
+         [sg, cg, 0]]
+
+    return K_inv.T * np.matrix(E).T * K_inv
+
+# perform harley and sturm technique to identify best estimate of noisy observations in two images
+# that line on an epipolar plane defined by the relative pose between the two camera
+def find_measurements_on_epipolar_plane_poly(px0, px, x, y, theta, fx, fy, cx, cy):
+    k = camera_intrinsics(fx, fy, cx, cy)
+
+    # project the 2d position of the second camera onto the local frame of the first
+    epipole0 = k * world_to_cam * np.matrix([x, y, 0, 1]).T
+    T0 = compute_local_image_frame_transform(epipole0, px0)
+
+    # project the 2d position of the first camera onto the local frame of the second
+    c = np.cos(theta)
+    s = np.sin(theta)
+    epipole = k * world_to_cam * global_to_local(x, y, theta) * np.matrix([0, 0, 0, 1]).T
+    T = compute_local_image_frame_transform(epipole, px)
+
+    # sanity check identities
+    print("Check local image coord trans should be (0, 0, 1):", (T0 * px0).T)
+    print("Check local image coord trans should be (0, 0, 1):", (T * px).T)
+
+    F = get_fundamental_matrix(x, y, theta, fx, fy, cx, cy)
+
+    # sanity check essential matrix 0 for noiseless cass
+    print("Check fundamental identity is 0: ", px.T * F * px0)
+
+    transformed_F = T * F * linalg.inv(T0)
+
+    transformed_epipole0 = T0 * epipole0
+    transformed_epipole = T * epipole
+
+    transformed_epipole0 = transformed_epipole0 / transformed_epipole0.item(0, 0)
+    transformed_epipole = transformed_epipole / transformed_epipole.item(0, 0)
+    print("Check transformed epipole0 (1, 0, f): ", transformed_epipole0.T)
+    print("Check transformed epipole (1, 0, f'): ", transformed_epipole.T)
+
+    f0 = transformed_epipole0.item(2, 0)
+    f = transformed_epipole.item(2, 0)
+
+    a = transformed_F.item(1, 1)
+    b = transformed_F.item(1, 2)
+    c = transformed_F.item(2, 1)
+    d = transformed_F.item(2, 2)
+
+    # sanity check transformed F and abcd
+    F_check = [[f0*f*d, -f*c, -f*d],
+               [-f0*b, a, b],
+               [-f0*d, c, d]]
+
+    # transformed F and abcd F seems off for the 1st row??
+    print("Transformed F:", transformed_F, "\n abcd F:", np.matrix(F_check))
+
+def solve_via_poly():
+    pt = random_3d_point()
+    print("Rand point: ", pt.T)
+
+    x, y, theta = 0.1, 0.1, 0
+    fx, fy, cx, cy = 50, 50, 0, 0
+    noise = 0
+    print("Pixel noise: ", noise)
+    px0 = project_point_to_cam(pt, 0, 0, 0, fx, fy, cx, cy, noise)
+    px = project_point_to_cam(pt, x, y, theta, fx, fy, cx, cy, noise)
+    print("Observed loc 1: ", px0.T)
+    print("Observed loc 2:", px.T)
+
+    # assume 0.5cm trans noise
+    x_noise = np.random.normal(0.01) * 0
+    y_noise = np.random.normal(0.01) * 0
+
+    # assume 0.5 deg angular noise
+    theta_noise = np.random.normal(0.009) * 0
+
+    find_measurements_on_epipolar_plane_poly(px0, px, x, y, theta, fx, fy, cx, cy)
+
 def main():
-    attempts = 1000
+    attempts = 1
 
     eig_errs = []
     no_eig_errs = []
     for i in range(attempts):
-        err_no_eig = solve_rand_point_exact_open_cv()
-        no_eig_errs.append(err_no_eig)
+        solve_via_poly()
+        # err_no_eig = solve_rand_point_exact_open_cv()
+        # no_eig_errs.append(err_no_eig)
     
-    mean_no_eig = np.mean(no_eig_errs)
-    print("No Eig % error: ", mean_no_eig)
+    # mean_no_eig = np.mean(no_eig_errs)
+    # print("No Eig % error: ", mean_no_eig)
 
 main()
