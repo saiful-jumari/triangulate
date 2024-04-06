@@ -34,7 +34,7 @@ def global_to_local(x, y, theta):
 
 # generate random 3d point in 1st camera frame (i.e. global frame)
 def random_3d_point():
-    x = random.uniform(0, 7)
+    x = random.uniform(0, 1)
     y = random.uniform(-3, 3)
     z = random.uniform(0.1, 5)
     return np.matrix([x, y, z, 1]).T
@@ -127,7 +127,7 @@ def main():
 
     # relative pose of camera in 2nd image
     x = 0
-    y = 2
+    y = 0.3
     theta = 0.0
 
     # generate random features in 3D homogeneous coordinates
