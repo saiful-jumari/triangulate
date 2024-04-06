@@ -181,6 +181,7 @@ def solve_rand_point_exact_open_cv():
     return percent_err
 
 def compute_local_image_frame_transform(epipole, u):
+    print("Check u: ", u)
     e1 = epipole.item(0, 0)
     e2 = epipole.item(1, 0)
     e3 = epipole.item(2, 0)
@@ -200,7 +201,7 @@ def compute_local_image_frame_transform(epipole, u):
     b = e2 - e3 * u2
 
     alpha = np.arctan2(b, a)
-    theta = 3.1415 - alpha
+    theta = -alpha
 
     c = np.cos(theta)
     s = np.sin(theta)
@@ -275,18 +276,23 @@ def find_measurements_on_epipolar_plane_poly(px0, px, x, y, theta, fx, fy, cx, c
     d = transformed_F.item(2, 2)
 
     # sanity check transformed F and abcd
+    check1 = -f*d / transformed_F.item(0, 2)
+    check2 = -f*c / transformed_F.item(0, 1)
+    check3 = f0*f*d/ transformed_F.item(0, 0)
+    print("Scale??: ", check1, check2, check3)
+
     F_check = [[f0*f*d, -f*c, -f*d],
                [-f0*b, a, b],
                [-f0*d, c, d]]
 
-    # transformed F and abcd F seems off for the 1st row??
+    # transformed F and abcd F seems off for the 1st row?? - need to double check, something seems wrong with f
     print("Transformed F:", transformed_F, "\n abcd F:", np.matrix(F_check))
 
 def solve_via_poly():
     pt = random_3d_point()
     print("Rand point: ", pt.T)
 
-    x, y, theta = 0.1, 0.1, 0
+    x, y, theta = 0.5, 0.5, 0.1
     fx, fy, cx, cy = 50, 50, 0, 0
     noise = 0
     print("Pixel noise: ", noise)
