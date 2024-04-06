@@ -1,6 +1,7 @@
 import numpy as np
 from numpy import linalg
 import random
+import cv2
 
 world_to_cam = np.matrix([[0, -1, 0, 0],
                           [0, 0, -1, 0],
@@ -47,7 +48,7 @@ def project_point_to_cam(point, x, y, theta, fx=1, fy=1, cx=0, cy=0, noise=0):
     k = camera_intrinsics(fx, fy, cx, cy)
 
     # add noise
-    epsilon = np.matrix([np.random.normal(scale=noise), np.random.normal(scale=noise), 1]).T
+    epsilon = np.matrix([np.random.normal(scale=noise), np.random.normal(scale=noise), 0]).T
 
     return k * point_local_cam_descale + epsilon
 
@@ -96,6 +97,27 @@ def triangulate(pt0, pt, x, y, theta, fx, fy, cx, cy, use_eigen=False):
         w = soln.item(0, 3)
         return (soln / w).T
 
+def solve_w_opencv(pt0, pt, x, y, theta, fx, fy, cx, cy):
+    k = camera_intrinsics(fx, fy, cx, cy)
+
+    # robot unmoved
+    P0 = k * world_to_cam * global_to_local(0, 0, 0)
+
+    # robot moved
+    P = k * world_to_cam * global_to_local(x, y, theta)
+
+    x0 = np.array([pt0.item(0, 0), pt0.item(1, 0)])
+    x = np.array([pt.item(0, 0), pt.item(1, 0)])
+    point_homo = cv2.triangulatePoints(np.array(P0), np.array(P), x0, x)
+
+    x = point_homo.item(0, 0)
+    y = point_homo.item(1, 0)
+    z = point_homo.item(2, 0)
+    w = point_homo.item(3, 0)
+
+    point = [x/w, y/w, z/w, 1]
+    return np.matrix(point).T
+
 def dist(p1, p2):
     return np.linalg.norm(p1 - p2)
 
@@ -105,7 +127,7 @@ def solve_rand_point_exact(use_eigen=False):
 
     x, y, theta = 0.03, 0, 0.09
     fx, fy, cx, cy = 50, 50, 0, 0
-    noise = 0.00
+    noise = 5
     print("Pixel noise: ", noise)
     px0 = project_point_to_cam(pt, 0, 0, 0, fx, fy, cx, cy, noise)
     px = project_point_to_cam(pt, x, y, theta, fx, fy, cx, cy, noise)
@@ -128,13 +150,42 @@ def solve_rand_point_exact(use_eigen=False):
     print("% Error: ", percent_err)
     return percent_err
 
+def solve_rand_point_exact_open_cv():
+    pt = random_3d_point()
+    print("Rand point: ", pt.T)
+
+    x, y, theta = 0.03, 0, 0.09
+    fx, fy, cx, cy = 50, 50, 0, 0
+    noise = 0
+    print("Pixel noise: ", noise)
+    px0 = project_point_to_cam(pt, 0, 0, 0, fx, fy, cx, cy, noise)
+    px = project_point_to_cam(pt, x, y, theta, fx, fy, cx, cy, noise)
+    print("Observed loc 1: ", px0.T)
+    print("Observed loc 2:", px.T)
+
+    # assume 0.5cm trans noise
+    x_noise = np.random.normal(0.01) * 0
+    y_noise = np.random.normal(0.01) * 0
+
+    # assume 0.5 deg angular noise
+    theta_noise = np.random.normal(0.009) * 0
+
+    est_3d_point = solve_w_opencv(px0, px, x, y, theta, fx, fy, cx, cy)
+
+    print("Estimated point: ", est_3d_point.T)
+
+    err = dist(pt, est_3d_point)
+    percent_err = err * 100 / np.linalg.norm(pt)
+    print("% Error: ", percent_err)
+    return percent_err
+
 def main():
     attempts = 1000
 
     eig_errs = []
     no_eig_errs = []
     for i in range(attempts):
-        err_no_eig = solve_rand_point_exact(False)
+        err_no_eig = solve_rand_point_exact_open_cv()
         no_eig_errs.append(err_no_eig)
     
     mean_no_eig = np.mean(no_eig_errs)
