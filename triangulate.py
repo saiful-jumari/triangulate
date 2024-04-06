@@ -26,9 +26,9 @@ def global_to_local(x, y, theta):
 
 
 def random_3d_point():
-    x = random.uniform(0, 3)
-    y = random.uniform(-2, 2)
-    z = random.uniform(1, 5)
+    x = random.uniform(0, 7)
+    y = random.uniform(-3, 3)
+    z = random.uniform(0.1, 5)
     return np.matrix([x, y, z, 1]).T
 
 
@@ -51,7 +51,7 @@ def project_point_to_cam(point, x, y, theta, fx=1, fy=1, cx=0, cy=0, noise=0):
 
     return k * point_local_cam_descale + epsilon
 
-def triangulate(pt0, pt, x, y, theta, fx, fy, cx, cy):
+def triangulate(pt0, pt, x, y, theta, fx, fy, cx, cy, use_eigen=False):
     k = camera_intrinsics(fx, fy, cx, cy)
 
     # robot unmoved
@@ -77,22 +77,35 @@ def triangulate(pt0, pt, x, y, theta, fx, fy, cx, cy):
 
     mat = np.matrix([r1, r2, r3, r4])
 
-    U, S, Vt = np.linalg.svd(mat)
-
-    soln = Vt[3]
-    w = soln.item(0, 3)
-    return (soln / w).T
+    if not use_eigen:
+        U, S, Vt = np.linalg.svd(mat)
+        soln = Vt[3]
+        w = soln.item(0, 3)
+        return (soln / w).T
+    else:
+        eigvals, eigvecs = np.linalg.eig(mat.T * mat)
+        
+        smallest_eig = 10000
+        idx = -1
+        for i in range(len(eigvals)):
+            if abs(eigvals[i]) < smallest_eig:
+                idx = i
+                smallest_eig = eigvals[i]
+        
+        soln = eigvecs[i]
+        w = soln.item(0, 3)
+        return (soln / w).T
 
 def dist(p1, p2):
     return np.linalg.norm(p1 - p2)
 
-def main():
+def solve_rand_point_exact(use_eigen=False):
     pt = random_3d_point()
     print("Rand point: ", pt.T)
 
-    x, y, theta = 0.03, 0, 0
+    x, y, theta = 0.03, 0, 0.09
     fx, fy, cx, cy = 50, 50, 0, 0
-    noise = 8
+    noise = 0.00
     print("Pixel noise: ", noise)
     px0 = project_point_to_cam(pt, 0, 0, 0, fx, fy, cx, cy, noise)
     px = project_point_to_cam(pt, x, y, theta, fx, fy, cx, cy, noise)
@@ -101,14 +114,30 @@ def main():
     print("Observed loc 2:", px.T)
 
     # assume 0.5cm trans noise
-    x_noise = np.random.normal(0.005)
-    y_noise = np.random.normal(0.005)
+    x_noise = np.random.normal(0.01) * 0
+    y_noise = np.random.normal(0.01) * 0
 
     # assume 0.5 deg angular noise
-    theta_noise = np.random.normal(0.009)
+    theta_noise = np.random.normal(0.009) * 0
 
-    est_3d_point = triangulate(px0, px, x, y, theta, fx, fy, cx, cy)
+    est_3d_point = triangulate(px0, px, x + x_noise, y + y_noise, theta + theta_noise, fx, fy, cx, cy, use_eigen)
+    print("Estimated point: ", est_3d_point.T)
+
     err = dist(pt, est_3d_point)
-    print("% Error: ", err / np.linalg.norm(pt))
+    percent_err = err * 100 / np.linalg.norm(pt)
+    print("% Error: ", percent_err)
+    return percent_err
+
+def main():
+    attempts = 1000
+
+    eig_errs = []
+    no_eig_errs = []
+    for i in range(attempts):
+        err_no_eig = solve_rand_point_exact(False)
+        no_eig_errs.append(err_no_eig)
+    
+    mean_no_eig = np.mean(no_eig_errs)
+    print("No Eig % error: ", mean_no_eig)
 
 main()
