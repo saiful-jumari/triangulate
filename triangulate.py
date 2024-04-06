@@ -310,17 +310,4 @@ def solve_via_poly():
 
     find_measurements_on_epipolar_plane_poly(px0, px, x, y, theta, fx, fy, cx, cy)
 
-def main():
-    attempts = 1
-
-    eig_errs = []
-    no_eig_errs = []
-    for i in range(attempts):
-        solve_via_poly()
-        # err_no_eig = solve_rand_point_exact_open_cv()
-        # no_eig_errs.append(err_no_eig)
-    
-    # mean_no_eig = np.mean(no_eig_errs)
-    # print("No Eig % error: ", mean_no_eig)
-
-main()
+def full_triangulate()
